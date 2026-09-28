@@ -91,8 +91,66 @@ defmodule LegionWeb.MarkupTest do
       assert html =~ "&lt;b"
     end
 
+    test "does not render executable markdown link destinations" do
+      html =
+        Markup.markdown("[Open the dashboard](JaVaScRiPt:alert(document.domain))")
+        |> to_html()
+
+      document = Floki.parse_fragment!(html)
+
+      assert Floki.text(document) =~ "Open the dashboard"
+      assert [_link] = Floki.find(document, "a")
+
+      refute document
+             |> Floki.attribute("a", "href")
+             |> Enum.any?(&dangerous_url?/1)
+    end
+
+    test "does not allow a quoted link destination to inject an event-handler attribute" do
+      html =
+        Markup.markdown(~s|[click](http://example.com/?a=x" onerror="alert(1))|)
+        |> to_html()
+
+      document = Floki.parse_fragment!(html)
+
+      assert Floki.text(document) =~ "click"
+      assert Floki.find(document, "[onerror]") == []
+    end
+
+    test "preserves a valid link destination and title" do
+      html = Markup.markdown(~s|[Docs](https://example.com/docs "Read the docs")|) |> to_html()
+      document = Floki.parse_fragment!(html)
+
+      assert Floki.text(document) == "Docs"
+      assert Floki.attribute(document, "a", "href") == ["https://example.com/docs"]
+      assert Floki.attribute(document, "a", "title") == ["Read the docs"]
+    end
+
+    test "does not render executable markdown image destinations" do
+      html =
+        Markup.markdown(
+          "![status](data:image/svg+xml,%3Csvg%20onload%3Dalert(document.domain)%3E)"
+        )
+        |> to_html()
+
+      document = Floki.parse_fragment!(html)
+
+      assert [_image] = Floki.find(document, "img")
+
+      refute document
+             |> Floki.attribute("img", "src")
+             |> Enum.any?(&dangerous_url?/1)
+    end
+
     test "renders malformed markdown best-effort instead of raising" do
       assert {:safe, _} = Markup.markdown("[unclosed](link\n\n> *")
     end
+  end
+
+  defp dangerous_url?(url) do
+    url
+    |> String.trim_leading()
+    |> String.downcase()
+    |> String.starts_with?(["javascript:", "vbscript:", "data:"])
   end
 end
